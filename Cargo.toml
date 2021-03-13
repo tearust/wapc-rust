@@ -18,7 +18,7 @@ env_logger = "0.7"
 serde = "1.0.110"
 serde_derive = "1.0.110"
 serde_json = "1.0.53"
-wasmtime = "0.16.0"
-wasmtime-wasi = "0.16.0"
 anyhow = "1.0"
-wasi-common = "0.16.0"
+wasmtime = { path = "../wasmtime/crates/api" }
+wasmtime-wasi = { path = "../wasmtime/crates/wasi" }
+wasi-common = { path = "../wasmtime/crates/wasi-common" }
