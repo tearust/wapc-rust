@@ -1112,7 +1112,6 @@ dependencies = [
  "cfg-if 0.1.10",
  "lazy_static",
  "libc",
- "log",
  "region",
  "rustc-demangle",
  "target-lexicon",
