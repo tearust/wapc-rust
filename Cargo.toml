@@ -22,8 +22,3 @@ anyhow = "1.0"
 wasmtime = { git = "https://github.com/tearust/wasmtime", branch = "nitro" }
 wasmtime-wasi = { git = "https://github.com/tearust/wasmtime", branch = "nitro" }
 wasi-common = { git = "https://github.com/tearust/wasmtime", branch = "nitro" }
-
-[patch.'https://github.com/tearust/wasmtime']
-wasmtime = { path = "../wasmtime/crates/api" }
-wasmtime-wasi = { path = "../wasmtime/crates/wasi" }
-wasi-common = { path = "../wasmtime/crates/wasi-common" }
