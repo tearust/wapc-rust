@@ -114,53 +114,50 @@ const WASI_UNSTABLE_NAMESPACE: &str = "wasi_unstable";
 const WASI_SNAPSHOT_PREVIEW1_NAMESPACE: &str = "wasi_snapshot_preview1";
 
 type HostCallback = dyn Fn(u64, &str, &str, &str, &[u8]) -> std::result::Result<Vec<u8>, TeaError>
-    + Sync
-    + Send
-    + 'static;
+	+ Sync
+	+ Send
+	+ 'static;
 
-type LogCallback = dyn Fn(u64, &str) -> std::result::Result<(), TeaError>
-    + Sync
-    + Send
-    + 'static;
+type LogCallback = dyn Fn(u64, &str) -> std::result::Result<(), TeaError> + Sync + Send + 'static;
 
 #[derive(Debug, Clone)]
 struct Invocation {
-    operation: String,
-    msg: Vec<u8>,
+	operation: String,
+	msg: Vec<u8>,
 }
 
 impl Invocation {
-    fn new(op: &str, msg: Vec<u8>) -> Invocation {
-        Invocation {
-            operation: op.to_string(),
-            msg,
-        }
-    }
+	fn new(op: &str, msg: Vec<u8>) -> Invocation {
+		Invocation {
+			operation: op.to_string(),
+			msg,
+		}
+	}
 }
 
 /// Stores the parameters required to create a WASI instance
 #[derive(Debug, Default)]
 pub struct WasiParams {
-    argv: Vec<String>,
-    map_dirs: Vec<(String, String)>,
-    env_vars: Vec<(String, String)>,
-    preopened_dirs: Vec<String>,
+	argv: Vec<String>,
+	map_dirs: Vec<(String, String)>,
+	env_vars: Vec<(String, String)>,
+	preopened_dirs: Vec<String>,
 }
 
 impl WasiParams {
-    pub fn new(
-        argv: Vec<String>,
-        map_dirs: Vec<(String, String)>,
-        env_vars: Vec<(String, String)>,
-        preopened_dirs: Vec<String>,
-    ) -> Self {
-        WasiParams {
-            argv,
-            map_dirs,
-            preopened_dirs,
-            env_vars,
-        }
-    }
+	pub fn new(
+		argv: Vec<String>,
+		map_dirs: Vec<(String, String)>,
+		env_vars: Vec<(String, String)>,
+		preopened_dirs: Vec<String>,
+	) -> Self {
+		WasiParams {
+			argv,
+			map_dirs,
+			preopened_dirs,
+			env_vars,
+		}
+	}
 }
 
 /// A WebAssembly host runtime for waPC-compliant WebAssembly modules
@@ -170,223 +167,214 @@ impl WasiParams {
 /// `WapcHost` makes no assumptions about the contents or format of either the payload or the
 /// operation name.
 pub struct WapcHost {
-    state: Rc<RefCell<ModuleState>>,
-    instance: Rc<RefCell<Option<Instance>>>,
-    wasidata: Option<WasiParams>,
-    guest_call_fn: HostRef<Func>,
+	state: Rc<RefCell<ModuleState>>,
+	instance: Rc<RefCell<Option<Instance>>>,
+	wasidata: Option<WasiParams>,
+	guest_call_fn: HostRef<Func>,
 }
 
 impl WapcHost {
-    /// Creates a new instance of a waPC-compliant WebAssembly host runtime.
-    pub fn new(
-        host_callback: impl Fn(
-                u64,
-                &str,
-                &str,
-                &str,
-                &[u8],
-            ) -> std::result::Result<Vec<u8>, TeaError>
-            + 'static
-            + Sync
-            + Send,
-        buf: &[u8],
-        wasi: Option<WasiParams>,
-    ) -> WapcResult<Self> {
-        let id = GLOBAL_MODULE_COUNT.fetch_add(1, Ordering::SeqCst);
-        let state = Rc::new(RefCell::new(ModuleState::new(id, Box::new(host_callback))));
-        let instance_ref = Rc::new(RefCell::new(None));
-        let instance = WapcHost::instance_from_buffer(buf, &wasi, state.clone())?;
-        instance_ref.replace(Some(instance));
-        let gc = guest_call_fn(instance_ref.clone())?;
-        let mh = WapcHost {
-            state,
-            instance: instance_ref,
-            wasidata: wasi,
-            guest_call_fn: gc,
-        };
+	/// Creates a new instance of a waPC-compliant WebAssembly host runtime.
+	pub fn new(
+		host_callback: impl Fn(u64, &str, &str, &str, &[u8]) -> std::result::Result<Vec<u8>, TeaError>
+			+ 'static
+			+ Sync
+			+ Send,
+		buf: &[u8],
+		wasi: Option<WasiParams>,
+	) -> WapcResult<Self> {
+		let id = GLOBAL_MODULE_COUNT.fetch_add(1, Ordering::SeqCst);
+		let state = Rc::new(RefCell::new(ModuleState::new(id, Box::new(host_callback))));
+		let instance_ref = Rc::new(RefCell::new(None));
+		let instance = WapcHost::instance_from_buffer(buf, &wasi, state.clone())?;
+		instance_ref.replace(Some(instance));
+		let gc = guest_call_fn(instance_ref.clone())?;
+		let mh = WapcHost {
+			state,
+			instance: instance_ref,
+			wasidata: wasi,
+			guest_call_fn: gc,
+		};
 
-        mh.initialize()?;
+		mh.initialize()?;
 
-        Ok(mh)
-    }
+		Ok(mh)
+	}
 
-    /// Creates a new instance of a waPC-compliant WebAssembly host runtime with a callback handler
-    /// for logging
-    pub fn new_with_logger(
-        host_callback: impl Fn(
-                u64,
-                &str,
-                &str,
-                &str,
-                &[u8],
-            ) -> std::result::Result<Vec<u8>, TeaError>
-            + 'static
-            + Sync
-            + Send,
-        buf: &[u8],
-        logger: impl Fn(u64, &str) -> std::result::Result<(), TeaError>
-            + Sync
-            + Send
-            + 'static,
-        wasi: Option<WasiParams>,
-    ) -> WapcResult<Self> {
-        let id = GLOBAL_MODULE_COUNT.fetch_add(1, Ordering::SeqCst);
-        let state = Rc::new(RefCell::new(ModuleState::new_with_logger(
-            id,
-            Box::new(host_callback),
-            Box::new(logger),
-        )));
-        let instance_ref = Rc::new(RefCell::new(None));
-        let instance = WapcHost::instance_from_buffer(buf, &wasi, state.clone())?;
-        instance_ref.replace(Some(instance));
-        let gc = guest_call_fn(instance_ref.clone())?;
-        let mh = WapcHost {
-            state,
-            instance: instance_ref,
-            wasidata: wasi,
-            guest_call_fn: gc,
-        };
+	/// Creates a new instance of a waPC-compliant WebAssembly host runtime with a callback handler
+	/// for logging
+	pub fn new_with_logger(
+		host_callback: impl Fn(u64, &str, &str, &str, &[u8]) -> std::result::Result<Vec<u8>, TeaError>
+			+ 'static
+			+ Sync
+			+ Send,
+		buf: &[u8],
+		logger: impl Fn(u64, &str) -> std::result::Result<(), TeaError> + Sync + Send + 'static,
+		wasi: Option<WasiParams>,
+	) -> WapcResult<Self> {
+		let id = GLOBAL_MODULE_COUNT.fetch_add(1, Ordering::SeqCst);
+		let state = Rc::new(RefCell::new(ModuleState::new_with_logger(
+			id,
+			Box::new(host_callback),
+			Box::new(logger),
+		)));
+		let instance_ref = Rc::new(RefCell::new(None));
+		let instance = WapcHost::instance_from_buffer(buf, &wasi, state.clone())?;
+		instance_ref.replace(Some(instance));
+		let gc = guest_call_fn(instance_ref.clone())?;
+		let mh = WapcHost {
+			state,
+			instance: instance_ref,
+			wasidata: wasi,
+			guest_call_fn: gc,
+		};
 
-        mh.initialize()?;
+		mh.initialize()?;
 
-        Ok(mh)
-    }
+		Ok(mh)
+	}
 
-    /// Returns a reference to the unique identifier of this module. If a parent process
-    /// has instantiated multiple `WapcHost`s, then the single static host call function
-    /// may be used to differentiate between modules.
-    pub fn id(&self) -> u64 {
-        self.state.borrow().id
-    }
+	/// Returns a reference to the unique identifier of this module. If a parent process
+	/// has instantiated multiple `WapcHost`s, then the single static host call function
+	/// may be used to differentiate between modules.
+	pub fn id(&self) -> u64 {
+		self.state.borrow().id
+	}
 
-    /// Invokes the `__guest_call` function within the guest module as per the waPC specification.
-    /// Provide an operation name and an opaque payload of bytes and the function returns a `Result`
-    /// containing either an error or an opaque reply of bytes.    
-    ///
-    /// It is worth noting that the _first_ time `call` is invoked, the WebAssembly module
-    /// will be JIT-compiled. This can take up to a few seconds on debug .wasm files, but
-    /// all subsequent calls will be "hot" and run at near-native speeds.    
-    pub fn call(&mut self, op: &str, payload: &[u8]) -> WapcResult<Vec<u8>> {
-        let inv = Invocation::new(op, payload.to_vec());
+	/// Invokes the `__guest_call` function within the guest module as per the waPC specification.
+	/// Provide an operation name and an opaque payload of bytes and the function returns a `Result`
+	/// containing either an error or an opaque reply of bytes.    
+	///
+	/// It is worth noting that the _first_ time `call` is invoked, the WebAssembly module
+	/// will be JIT-compiled. This can take up to a few seconds on debug .wasm files, but
+	/// all subsequent calls will be "hot" and run at near-native speeds.    
+	pub fn call(&mut self, op: &str, payload: &[u8]) -> WapcResult<Vec<u8>> {
+		let inv = Invocation::new(op, payload.to_vec());
 
-        {
-            let mut state = self.state.borrow_mut();
-            state.guest_response = None;
-            state.guest_request = Some((inv).clone());
-            state.guest_error = None;
-        }
+		{
+			let mut state = self.state.borrow_mut();
+			state.guest_response = None;
+			state.guest_request = Some((inv).clone());
+			state.guest_error = None;
+		}
 
-        let callresult: i32 = call!(
-            self.guest_call_fn,
-            inv.operation.len() as i32,
-            inv.msg.len() as i32
-        );
+		let callresult: i32 = call!(
+			self.guest_call_fn,
+			inv.operation.len() as i32,
+			inv.msg.len() as i32
+		);
 
-        if callresult == 0 {
-            // invocation failed
-            match self.state.borrow().guest_error {
-                Some(ref s) => Err(errors::new(errors::ErrorKind::GuestCallFailure(s.clone()))),
-                None => Err(errors::new(errors::ErrorKind::GuestCallFailure(
-                    TeaError::CommonError("No error message set for call failure".to_string()),
-                ))),
-            }
-        } else {
-            // invocation succeeded
-            match self.state.borrow().guest_response {
-                Some(ref e) => Ok(e.clone()),
-                None => match self.state.borrow().guest_error {
-                    Some(ref s) => Err(errors::new(errors::ErrorKind::GuestCallFailure(s.clone()))),
-                    None => Err(errors::new(errors::ErrorKind::GuestCallFailure(
-                        TeaError::CommonError("No error message OR response set for call success".to_string()),
-                    ))),
-                },
-            }
-        }
-    }
+		if callresult == 0 {
+			// invocation failed
+			match self.state.borrow().guest_error {
+				Some(ref s) => Err(errors::new(errors::ErrorKind::GuestCallFailure(s.clone()))),
+				None => Err(errors::new(errors::ErrorKind::GuestCallFailure(
+					TeaError::CommonError("No error message set for call failure".to_string()),
+				))),
+			}
+		} else {
+			// invocation succeeded
+			match self.state.borrow().guest_response {
+				Some(ref e) => Ok(e.clone()),
+				None => match self.state.borrow().guest_error {
+					Some(ref s) => Err(errors::new(errors::ErrorKind::GuestCallFailure(s.clone()))),
+					None => Err(errors::new(errors::ErrorKind::GuestCallFailure(
+						TeaError::CommonError(
+							"No error message OR response set for call success".to_string(),
+						),
+					))),
+				},
+			}
+		}
+	}
 
-    /// Performs a live "hot swap" of the WebAssembly module. Since execution is assumed to be
-    /// single-threaded within the environment of the `WapcHost`, this will not cause any pending function
-    /// calls to be lost. This will replace the currently executing WebAssembly module with the new
-    /// bytes.
-    ///
-    /// **Note**: you will lose all JITted functions for this module, so the first `call` after a
-    /// hot swap will be "cold" and take longer than regular calls. There are an enormous number of
-    /// ways in which a hot swap could go horribly wrong, so please ensure you have the proper guards
-    /// in place before invoking it. Libraries that build upon this one can (and likely should) implement
-    /// some form of security to protect against malicious swaps.
-    ///
-    /// If you perform a hot swap of a WASI module, you cannot alter the parameters used to create the WASI module
-    /// like the environment variables, mapped directories, pre-opened files, etc. Not abiding by this could lead
-    /// to privilege escalation attacks or non-deterministic behavior after the swap.
-    pub fn replace_module(&self, module: &[u8]) -> WapcResult<()> {
-        info!(
-            "HOT SWAP - Replacing existing WebAssembly module with new buffer, {} bytes",
-            module.len()
-        );
-        let state = self.state.clone();
-        let new_instance = WapcHost::instance_from_buffer(module, &self.wasidata, state)?;
-        self.instance.borrow_mut().replace(new_instance);
+	/// Performs a live "hot swap" of the WebAssembly module. Since execution is assumed to be
+	/// single-threaded within the environment of the `WapcHost`, this will not cause any pending function
+	/// calls to be lost. This will replace the currently executing WebAssembly module with the new
+	/// bytes.
+	///
+	/// **Note**: you will lose all JITted functions for this module, so the first `call` after a
+	/// hot swap will be "cold" and take longer than regular calls. There are an enormous number of
+	/// ways in which a hot swap could go horribly wrong, so please ensure you have the proper guards
+	/// in place before invoking it. Libraries that build upon this one can (and likely should) implement
+	/// some form of security to protect against malicious swaps.
+	///
+	/// If you perform a hot swap of a WASI module, you cannot alter the parameters used to create the WASI module
+	/// like the environment variables, mapped directories, pre-opened files, etc. Not abiding by this could lead
+	/// to privilege escalation attacks or non-deterministic behavior after the swap.
+	pub fn replace_module(&self, module: &[u8]) -> WapcResult<()> {
+		info!(
+			"HOT SWAP - Replacing existing WebAssembly module with new buffer, {} bytes",
+			module.len()
+		);
+		let state = self.state.clone();
+		let new_instance = WapcHost::instance_from_buffer(module, &self.wasidata, state)?;
+		self.instance.borrow_mut().replace(new_instance);
 
-        self.initialize()
-    }
+		self.initialize()
+	}
 
-    fn instance_from_buffer(
-        buf: &[u8],
-        wasi: &Option<WasiParams>,
-        state: Rc<RefCell<ModuleState>>,
-    ) -> WapcResult<Instance> {
-        let engine = Engine::default();
-        let store = Store::new(&engine);
-        let module = Module::new(&store, buf).unwrap();
+	fn instance_from_buffer(
+		buf: &[u8],
+		wasi: &Option<WasiParams>,
+		state: Rc<RefCell<ModuleState>>,
+	) -> WapcResult<Instance> {
+		let engine = Engine::default();
+		let store = Store::new(&engine);
+		let module = Module::new(&store, buf).unwrap();
 
-        let d = WasiParams::default();
-        let wasi = match wasi {
-            Some(w) => w,
-            None => &d,
-        };
+		let d = WasiParams::default();
+		let wasi = match wasi {
+			Some(w) => w,
+			None => &d,
+		};
 
-        // Make wasi available by default.
-        let preopen_dirs =
-            modreg::compute_preopen_dirs(&wasi.preopened_dirs, &wasi.map_dirs).unwrap();
-        let argv = vec![]; // TODO: add support for argv (if applicable)
+		// Make wasi available by default.
+		let preopen_dirs =
+			modreg::compute_preopen_dirs(&wasi.preopened_dirs, &wasi.map_dirs).unwrap();
+		let argv = vec![]; // TODO: add support for argv (if applicable)
 
-        let module_registry =
-            ModuleRegistry::new(&store, &preopen_dirs, &argv, &wasi.env_vars).unwrap();
+		let module_registry =
+			ModuleRegistry::new(&store, &preopen_dirs, &argv, &wasi.env_vars).unwrap();
 
-        let imports = arrange_imports(&module, state.clone(), store.clone(), &module_registry);
+		let imports = arrange_imports(&module, state.clone(), store.clone(), &module_registry);
 
-        Ok(wasmtime::Instance::new(&module, imports?.as_slice()).unwrap())
-    }
+		Ok(wasmtime::Instance::new(&module, imports?.as_slice()).unwrap())
+	}
 
-    fn initialize(&self) -> WapcResult<()> {
-        if let Some(ext) = self
-            .instance
-            .borrow()
-            .as_ref()
-            .unwrap()
-            .get_export("_start")
-        {
-            ext.into_func().unwrap().call(&[]).map(|_| ()).map_err(|_err| {
-                errors::new(errors::ErrorKind::GuestCallFailure(
-                    TeaError::CommonError("Error invoking _start function!".to_string()),
-                ))
-            })
-        } else {
-            Ok(())
-        }
-    }
+	fn initialize(&self) -> WapcResult<()> {
+		if let Some(ext) = self
+			.instance
+			.borrow()
+			.as_ref()
+			.unwrap()
+			.get_export("_start")
+		{
+			ext.into_func()
+				.unwrap()
+				.call(&[])
+				.map(|_| ())
+				.map_err(|_err| {
+					errors::new(errors::ErrorKind::GuestCallFailure(TeaError::CommonError(
+						"Error invoking _start function!".to_string(),
+					)))
+				})
+		} else {
+			Ok(())
+		}
+	}
 }
 
 // Called once, then the result is cached. This returns a `Func` that corresponds
 // to the `__guest_call` export
 fn guest_call_fn(instance: Rc<RefCell<Option<Instance>>>) -> WapcResult<HostRef<Func>> {
-    if let Some(ext) = instance.borrow().as_ref().unwrap().get_export(GUEST_CALL) {
-        Ok(HostRef::new(ext.into_func().unwrap().clone()))
-    } else {
-        Err(errors::new(errors::ErrorKind::GuestCallFailure(
-            TeaError::CommonError("Guest module did not export __guest_call function!".to_string()),
-        )))
-    }
+	if let Some(ext) = instance.borrow().as_ref().unwrap().get_export(GUEST_CALL) {
+		Ok(HostRef::new(ext.into_func().unwrap().clone()))
+	} else {
+		Err(errors::new(errors::ErrorKind::GuestCallFailure(
+			TeaError::CommonError("Guest module did not export __guest_call function!".to_string()),
+		)))
+	}
 }
 
 /// wasmtime requires that the list of callbacks be "zippable" with the list
@@ -395,63 +383,63 @@ fn guest_call_fn(instance: Rc<RefCell<Option<Instance>>>) -> WapcResult<HostRef<
 /// corresponding callback. We **cannot** rely on a predictable import order
 /// in the wasm module
 fn arrange_imports(
-    module: &Module,
-    state: Rc<RefCell<ModuleState>>,
-    store: Store,
-    mod_registry: &ModuleRegistry,
+	module: &Module,
+	state: Rc<RefCell<ModuleState>>,
+	store: Store,
+	mod_registry: &ModuleRegistry,
 ) -> WapcResult<Vec<Extern>> {
-    Ok(module
-        .imports()        
-        .filter_map(|imp| {
-            if let ExternType::Func(_) = imp.ty() {
-                match imp.module() {
-                    HOST_NAMESPACE => Some(callback_for_import(
-                        imp.name(),
-                        state.clone(),
-                        store.clone(),
-                    )),
-                    // TODO: to forcibly block the use of WASI, these should error
-                    // rather than looking up WASI modules.
-                    WASI_UNSTABLE_NAMESPACE => {
-                        let f = Extern::from(
-                            mod_registry
-                                .wasi_unstable
-                                .get_export(imp.name())
-                                .unwrap()
-                                .clone(),
-                        );
-                        Some(f)
-                    }
-                    WASI_SNAPSHOT_PREVIEW1_NAMESPACE => {
-                        let f: Extern = Extern::from(
-                            mod_registry
-                                .wasi_snapshot_preview1
-                                .get_export(imp.name())
-                                .unwrap()
-                                .clone(),
-                        );
-                        Some(f)
-                    }
-                    other => panic!("import module `{}` was not found", other), //TODO: get rid of panic
-                }
-            } else {
-                None
-            }
-        })
-        .collect())
+	Ok(module
+		.imports()
+		.filter_map(|imp| {
+			if let ExternType::Func(_) = imp.ty() {
+				match imp.module() {
+					HOST_NAMESPACE => Some(callback_for_import(
+						imp.name(),
+						state.clone(),
+						store.clone(),
+					)),
+					// TODO: to forcibly block the use of WASI, these should error
+					// rather than looking up WASI modules.
+					WASI_UNSTABLE_NAMESPACE => {
+						let f = Extern::from(
+							mod_registry
+								.wasi_unstable
+								.get_export(imp.name())
+								.unwrap()
+								.clone(),
+						);
+						Some(f)
+					}
+					WASI_SNAPSHOT_PREVIEW1_NAMESPACE => {
+						let f: Extern = Extern::from(
+							mod_registry
+								.wasi_snapshot_preview1
+								.get_export(imp.name())
+								.unwrap()
+								.clone(),
+						);
+						Some(f)
+					}
+					other => panic!("import module `{}` was not found", other), //TODO: get rid of panic
+				}
+			} else {
+				None
+			}
+		})
+		.collect())
 }
 
 fn callback_for_import(import: &str, state: Rc<RefCell<ModuleState>>, store: Store) -> Extern {
-    match import {
-        HOST_CONSOLE_LOG => callbacks::console_log_func(&store, state.clone()).into(),
-        HOST_CALL => callbacks::host_call_func(&store, state.clone()).into(),
-        GUEST_REQUEST_FN => callbacks::guest_request_func(&store, state.clone()).into(),
-        HOST_RESPONSE_FN => callbacks::host_response_func(&store, state.clone()).into(),
-        HOST_RESPONSE_LEN_FN => callbacks::host_response_len_func(&store, state.clone()).into(),
-        GUEST_RESPONSE_FN => callbacks::guest_response_func(&store, state.clone()).into(),
-        GUEST_ERROR_FN => callbacks::guest_error_func(&store, state.clone()).into(),
-        HOST_ERROR_FN => callbacks::host_error_func(&store, state.clone()).into(),
-        HOST_ERROR_LEN_FN => callbacks::host_error_len_func(&store, state.clone()).into(),
-        _ => unreachable!(),
-    }
+	match import {
+		HOST_CONSOLE_LOG => callbacks::console_log_func(&store, state.clone()).into(),
+		HOST_CALL => callbacks::host_call_func(&store, state.clone()).into(),
+		GUEST_REQUEST_FN => callbacks::guest_request_func(&store, state.clone()).into(),
+		HOST_RESPONSE_FN => callbacks::host_response_func(&store, state.clone()).into(),
+		HOST_RESPONSE_LEN_FN => callbacks::host_response_len_func(&store, state.clone()).into(),
+		GUEST_RESPONSE_FN => callbacks::guest_response_func(&store, state.clone()).into(),
+		GUEST_ERROR_FN => callbacks::guest_error_func(&store, state.clone()).into(),
+		HOST_ERROR_FN => callbacks::host_error_func(&store, state.clone()).into(),
+		HOST_ERROR_LEN_FN => callbacks::host_error_len_func(&store, state.clone()).into(),
+		_ => unreachable!(),
+	}
 }
