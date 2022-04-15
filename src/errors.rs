@@ -16,12 +16,13 @@
 
 use std::error::Error as StdError;
 use std::fmt;
+use tea_codec::error::TeaError;
 
 #[derive(Debug)]
-pub struct Error(Box<ErrorKind>);
+pub struct WapcError(Box<ErrorKind>);
 
-pub fn new(kind: ErrorKind) -> Error {
-    Error(Box::new(kind))
+pub fn new(kind: ErrorKind) -> WapcError {
+    WapcError(Box::new(kind))
 }
 
 #[derive(Debug)]
@@ -30,10 +31,10 @@ pub enum ErrorKind {
     IO(std::io::Error),
     WasmMisc(String),
     HostCallFailure(Box<dyn StdError>),
-    GuestCallFailure(String),
+    GuestCallFailure(TeaError),
 }
 
-impl Error {
+impl WapcError {
     pub fn kind(&self) -> &ErrorKind {
         &self.0
     }
@@ -43,7 +44,7 @@ impl Error {
     }
 }
 
-impl StdError for Error {
+impl StdError for WapcError {
     fn description(&self) -> &str {
         match *self.0 {
             ErrorKind::NoSuchFunction(_) => "No such function in Wasm module",
@@ -65,7 +66,7 @@ impl StdError for Error {
     }
 }
 
-impl fmt::Display for Error {
+impl fmt::Display for WapcError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self.0 {
             ErrorKind::NoSuchFunction(ref fname) => {
@@ -81,8 +82,8 @@ impl fmt::Display for Error {
     }
 }
 
-impl From<std::io::Error> for Error {
-    fn from(source: std::io::Error) -> Error {
-        Error(Box::new(ErrorKind::IO(source)))
+impl From<std::io::Error> for WapcError {
+    fn from(source: std::io::Error) -> WapcError {
+        WapcError(Box::new(ErrorKind::IO(source)))
     }
 }

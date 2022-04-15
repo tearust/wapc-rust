@@ -1,7 +1,9 @@
 extern crate wapc;
 use std::fs::File;
 use std::io::prelude::*;
+use tea_codec::error::TeaError;
 use wapc::prelude::*;
+use wapc::WapcResult;
 
 fn load_file() -> Vec<u8> {
     let mut f = File::open(".assets/hello_as.wasm").unwrap();
@@ -10,7 +12,7 @@ fn load_file() -> Vec<u8> {
     buf
 }
 
-pub fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub fn main() -> WapcResult<()> {
     env_logger::init();
     let module_bytes = load_file();
     let mut host = WapcHost::new(host_callback, &module_bytes, None)?;
@@ -28,7 +30,7 @@ fn host_callback(
     ns: &str,
     op: &str,
     payload: &[u8],
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+) -> Result<Vec<u8>, TeaError> {
     println!(
         "Guest {} invoked '{}->{}:{}' with payload of {}",
         id,

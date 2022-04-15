@@ -1,6 +1,6 @@
 //! Taken from the wasmtime CLI
 
-use crate::Result;
+use crate::WapcResult;
 use anyhow::Context as _;
 use std::{
     ffi::OsStr,
@@ -22,7 +22,7 @@ impl ModuleRegistry {
         preopen_dirs: &[(String, File)],
         argv: &[String],
         vars: &[(String, String)],
-    ) -> Result<ModuleRegistry> {
+    ) -> WapcResult<ModuleRegistry> {
         let mut cx1 = wasi_common::WasiCtxBuilder::new();
 
         cx1.inherit_stdio().args(argv).envs(vars);
@@ -53,7 +53,7 @@ impl ModuleRegistry {
 pub(crate) fn compute_preopen_dirs(
     dirs: &Vec<String>,
     map_dirs: &Vec<(String, String)>,
-) -> Result<Vec<(String, File)>> {
+) -> WapcResult<Vec<(String, File)>> {
     let mut preopen_dirs = Vec::new();
 
     for dir in dirs.iter() {

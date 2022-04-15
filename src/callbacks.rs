@@ -2,16 +2,18 @@ use crate::Invocation;
 use crate::{HostCallback, LogCallback};
 use std::cell::RefCell;
 use std::rc::Rc;
-use wasmtime::Memory;
+use wasmtime::{Memory, Trap};
 use wasmtime::{Caller, Func, FuncType, HostRef, Store, Val, ValType};
+use tea_codec::error::TeaError;
+use tea_codec::{deserialize, serialize};
 
 #[derive(Default)]
 pub(crate) struct ModuleState {
     pub guest_request: Option<Invocation>,
     pub guest_response: Option<Vec<u8>>,
     pub host_response: Option<Vec<u8>>,
-    pub guest_error: Option<String>,
-    pub host_error: Option<String>,
+    pub guest_error: Option<TeaError>,
+    pub host_error: Option<TeaError>,
     pub host_callback: Option<Box<HostCallback>>,
     pub log_callback: Option<Box<LogCallback>>,
     pub id: u64,
@@ -137,7 +139,7 @@ pub(crate) fn host_call_func(store: &Store, state: Rc<RefCell<ModuleState>>) -> 
             let result = {
                 match state.borrow().host_callback {
                     Some(ref f) => f(id, bd, ns, op, &vec),
-                    None => Err("missing host callback function".into()),
+                    None => Err(TeaError::CommonError("missing host callback function".into())),
                 }
             };
             results[0] = Val::I32(match result {
@@ -146,7 +148,7 @@ pub(crate) fn host_call_func(store: &Store, state: Rc<RefCell<ModuleState>>) -> 
                     1
                 }
                 Err(e) => {
-                    state.borrow_mut().host_error = Some(format!("{}", e));
+                    state.borrow_mut().host_error = Some(e);
                     0
                 }
             });
@@ -217,7 +219,7 @@ pub(crate) fn guest_error_func(store: &Store, state: Rc<RefCell<ModuleState>>) -
             let len = params[1].i32();
 
             let vec = get_vec_from_memory(memory, ptr.unwrap(), len.unwrap());
-            state.borrow_mut().guest_error = Some(String::from_utf8(vec).unwrap());
+            state.borrow_mut().guest_error = Some(deserialize(&vec).map_err(|e| Trap::new(format!("{:?}", e)))?);
 
             Ok(())
         },
@@ -234,7 +236,7 @@ pub(crate) fn host_error_func(store: &Store, state: Rc<RefCell<ModuleState>>) ->
             if let Some(ref e) = state.borrow().host_error {
                 let ptr = params[0].i32();
                 let memory = get_caller_memory(&caller).unwrap();
-                write_bytes_to_memory(memory, ptr.unwrap(), e.as_bytes());
+                write_bytes_to_memory(memory, ptr.unwrap(), &serialize(e).map_err(|e| Trap::new(format!("{:?}", e)))?);
             }
             Ok(())
         },
@@ -249,7 +251,7 @@ pub(crate) fn host_error_len_func(store: &Store, state: Rc<RefCell<ModuleState>>
         callback_type,
         move |_caller: Caller, _params: &[Val], results: &mut [Val]| {
             results[0] = Val::I32(match state.borrow().host_error {
-                Some(ref e) => e.len() as _,
+                Some(_) => 1,
                 None => 0,
             });
             Ok(())
