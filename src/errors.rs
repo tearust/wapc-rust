@@ -16,6 +16,8 @@
 
 use std::error::Error as StdError;
 use std::fmt;
+use tea_codec::error::code::common::{new_common_error_code, STD_IO_ERROR};
+use tea_codec::error::code::wascc::{GUEST_CALL_FAILURE, HOST_CALL_FAILURE, new_wascc_error_code, NO_SUCH_FUNCTION, WASM_MISC};
 use tea_codec::error::TeaError;
 
 #[derive(Debug)]
@@ -30,7 +32,7 @@ pub enum ErrorKind {
 	NoSuchFunction(String),
 	IO(std::io::Error),
 	WasmMisc(String),
-	HostCallFailure(Box<dyn StdError>),
+	HostCallFailure(TeaError),
 	GuestCallFailure(TeaError),
 }
 
@@ -41,6 +43,18 @@ impl WapcError {
 
 	pub fn into_kind(self) -> ErrorKind {
 		*self.0
+	}
+}
+
+impl Into<TeaError> for WapcError {
+	fn into(self) -> TeaError {
+		match *self.0 {
+			ErrorKind::NoSuchFunction(s) => new_wascc_error_code(NO_SUCH_FUNCTION).to_error_code(Some(s), None),
+			ErrorKind::IO(e) => new_common_error_code(STD_IO_ERROR).to_error_code(Some(format!("{:?}", e)), None ),
+			ErrorKind::WasmMisc(s) => new_wascc_error_code(WASM_MISC).to_error_code(Some(s), None),
+			ErrorKind::HostCallFailure(inner) => new_wascc_error_code(HOST_CALL_FAILURE).error_from_nested(inner),
+			ErrorKind::GuestCallFailure(inner) => new_wascc_error_code(GUEST_CALL_FAILURE).error_from_nested(inner),
+		}
 	}
 }
 
@@ -75,9 +89,9 @@ impl fmt::Display for WapcError {
 			ErrorKind::IO(ref err) => write!(f, "I/O error: {}", err),
 			ErrorKind::WasmMisc(ref err) => write!(f, "WebAssembly error: {}", err),
 			ErrorKind::HostCallFailure(ref err) => {
-				write!(f, "Error occurred during host call: {}", err)
+				write!(f, "Error occurred during host call: {:?}", err)
 			}
-			ErrorKind::GuestCallFailure(ref reason) => write!(f, "Guest call failure: {}", reason),
+			ErrorKind::GuestCallFailure(ref reason) => write!(f, "Guest call failure: {:?}", reason),
 		}
 	}
 }

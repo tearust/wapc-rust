@@ -1029,7 +1029,6 @@ checksum = "ab0e7238dcc7b40a7be719a25365910f6807bd864f4cce6b2e6b873658e2b19d"
 name = "tea-codec"
 version = "0.1.1"
 dependencies = [
- "anyhow",
  "log",
  "rmp-serde",
  "serde",
