@@ -22,4 +22,4 @@ anyhow = "1.0"
 wasmtime = { git = "https://github.com/tearust/wasmtime", branch = "nitro" }
 wasmtime-wasi = { git = "https://github.com/tearust/wasmtime", branch = "nitro" }
 wasi-common = { git = "https://github.com/tearust/wasmtime", branch = "nitro" }
-tea-codec = { path = "../tea-codec" }
+tea-codec = { git = "https://github.com/tearust/tea-codec", branch = "dev" }
