@@ -138,6 +138,7 @@ impl Invocation {
 /// Stores the parameters required to create a WASI instance
 #[derive(Debug, Default)]
 pub struct WasiParams {
+	#[allow(dead_code)]
 	argv: Vec<String>,
 	map_dirs: Vec<(String, String)>,
 	env_vars: Vec<(String, String)>,

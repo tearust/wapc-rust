@@ -16,9 +16,7 @@
 
 use std::error::Error as StdError;
 use std::fmt;
-use tea_codec::error::code::common::{new_common_error_code, STD_IO_ERROR};
-use tea_codec::error::code::wascc::{GUEST_CALL_FAILURE, HOST_CALL_FAILURE, new_wascc_error_code, NO_SUCH_FUNCTION, WASM_MISC};
-use tea_codec::error::TeaError;
+use tea_codec::error::{CommonCode, new_common_error_code, new_wascc_error_code, TeaError, WasccCode};
 
 #[derive(Debug)]
 pub struct WapcError(Box<ErrorKind>);
@@ -49,11 +47,11 @@ impl WapcError {
 impl Into<TeaError> for WapcError {
 	fn into(self) -> TeaError {
 		match *self.0 {
-			ErrorKind::NoSuchFunction(s) => new_wascc_error_code(NO_SUCH_FUNCTION).to_error_code(Some(s), None),
-			ErrorKind::IO(e) => new_common_error_code(STD_IO_ERROR).to_error_code(Some(format!("{:?}", e)), None ),
-			ErrorKind::WasmMisc(s) => new_wascc_error_code(WASM_MISC).to_error_code(Some(s), None),
-			ErrorKind::HostCallFailure(inner) => new_wascc_error_code(HOST_CALL_FAILURE).error_from_nested(inner),
-			ErrorKind::GuestCallFailure(inner) => new_wascc_error_code(GUEST_CALL_FAILURE).error_from_nested(inner),
+			ErrorKind::NoSuchFunction(s) => new_wascc_error_code(WasccCode::NoSuchFunction).to_error_code(Some(s), None),
+			ErrorKind::IO(e) => new_common_error_code(CommonCode::StdIoError).to_error_code(Some(format!("{:?}", e)), None ),
+			ErrorKind::WasmMisc(s) => new_wascc_error_code(WasccCode::WasmMisc).to_error_code(Some(s), None),
+			ErrorKind::HostCallFailure(inner) => new_wascc_error_code(WasccCode::HostCallFailure).error_from_nested(inner),
+			ErrorKind::GuestCallFailure(inner) => new_wascc_error_code(WasccCode::GuestCallFailure).error_from_nested(inner),
 		}
 	}
 }
