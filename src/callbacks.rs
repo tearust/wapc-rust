@@ -258,7 +258,7 @@ pub(crate) fn host_error_len_func(store: &Store, state: Rc<RefCell<ModuleState>>
 		callback_type,
 		move |_caller: Caller, _params: &[Val], results: &mut [Val]| {
 			results[0] = Val::I32(match state.borrow().host_error {
-				Some(_) => 1,
+				Some(ref e) => serialize(e).unwrap_or_default().len() as _,
 				None => 0,
 			});
 			Ok(())
