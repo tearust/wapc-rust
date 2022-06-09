@@ -14,9 +14,9 @@
 
 //! Library-specific error types and utility functions
 
-use std::error::Error as StdError;
-use std::fmt;
-use tea_codec::error::{CommonCode, new_common_error_code, new_wascc_error_code, TeaError, WasccCode};
+use tea_codec::error::{
+	new_common_error_code, new_wascc_error_code, CommonCode, TeaError, WasccCode,
+};
 
 #[derive(Debug)]
 pub struct WapcError(Box<ErrorKind>);
@@ -47,49 +47,20 @@ impl WapcError {
 impl Into<TeaError> for WapcError {
 	fn into(self) -> TeaError {
 		match *self.0 {
-			ErrorKind::NoSuchFunction(s) => new_wascc_error_code(WasccCode::NoSuchFunction).to_error_code(Some(s), None),
-			ErrorKind::IO(e) => new_common_error_code(CommonCode::StdIoError).to_error_code(Some(format!("{:?}", e)), None ),
-			ErrorKind::WasmMisc(s) => new_wascc_error_code(WasccCode::WasmMisc).to_error_code(Some(s), None),
-			ErrorKind::HostCallFailure(inner) => new_wascc_error_code(WasccCode::HostCallFailure).error_from_nested(inner),
-			ErrorKind::GuestCallFailure(inner) => new_wascc_error_code(WasccCode::GuestCallFailure).error_from_nested(inner),
-		}
-	}
-}
-
-impl StdError for WapcError {
-	fn description(&self) -> &str {
-		match *self.0 {
-			ErrorKind::NoSuchFunction(_) => "No such function in Wasm module",
-			ErrorKind::IO(_) => "I/O error",
-			ErrorKind::WasmMisc(_) => "WebAssembly failure",
-			ErrorKind::HostCallFailure(_) => "Error occurred during host call",
-			ErrorKind::GuestCallFailure(_) => "Guest call failure",
-		}
-	}
-
-	fn cause(&self) -> Option<&dyn StdError> {
-		match *self.0 {
-			ErrorKind::NoSuchFunction(_) => None,
-			ErrorKind::IO(ref err) => Some(err),
-			ErrorKind::WasmMisc(_) => None,
-			ErrorKind::HostCallFailure(_) => None,
-			ErrorKind::GuestCallFailure(_) => None,
-		}
-	}
-}
-
-impl fmt::Display for WapcError {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		match *self.0 {
-			ErrorKind::NoSuchFunction(ref fname) => {
-				write!(f, "No such function in Wasm module: {}", fname)
+			ErrorKind::NoSuchFunction(s) => {
+				new_wascc_error_code(WasccCode::NoSuchFunction).to_error_code(Some(s), None)
 			}
-			ErrorKind::IO(ref err) => write!(f, "I/O error: {}", err),
-			ErrorKind::WasmMisc(ref err) => write!(f, "WebAssembly error: {}", err),
-			ErrorKind::HostCallFailure(ref err) => {
-				write!(f, "Error occurred during host call: {:?}", err)
+			ErrorKind::IO(e) => new_common_error_code(CommonCode::StdIoError)
+				.to_error_code(Some(format!("{:?}", e)), None),
+			ErrorKind::WasmMisc(s) => {
+				new_wascc_error_code(WasccCode::WasmMisc).to_error_code(Some(s), None)
 			}
-			ErrorKind::GuestCallFailure(ref reason) => write!(f, "Guest call failure: {:?}", reason),
+			ErrorKind::HostCallFailure(inner) => {
+				new_wascc_error_code(WasccCode::HostCallFailure).error_from_nested(inner)
+			}
+			ErrorKind::GuestCallFailure(inner) => {
+				new_wascc_error_code(WasccCode::GuestCallFailure).error_from_nested(inner)
+			}
 		}
 	}
 }

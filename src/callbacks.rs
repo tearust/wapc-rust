@@ -1,6 +1,7 @@
 use crate::Invocation;
 use crate::{HostCallback, LogCallback};
 use std::cell::RefCell;
+use std::convert::TryInto;
 use std::rc::Rc;
 use tea_codec::error::TeaError;
 use tea_codec::{deserialize, serialize};
@@ -239,11 +240,9 @@ pub(crate) fn host_error_func(store: &Store, state: Rc<RefCell<ModuleState>>) ->
 			if let Some(ref e) = state.borrow().host_error {
 				let ptr = params[0].i32();
 				let memory = get_caller_memory(&caller).unwrap();
-				write_bytes_to_memory(
-					memory,
-					ptr.unwrap(),
-					&serialize(e).map_err(|e| Trap::new(format!("{:?}", e)))?,
-				);
+				let buf = serialize(e)
+					.map_err(|e| Trap::new(format!("serialize host error failed: {:?}", e)))?;
+				write_bytes_to_memory(memory, ptr.unwrap(), buf.as_slice());
 			}
 			Ok(())
 		},
@@ -258,7 +257,13 @@ pub(crate) fn host_error_len_func(store: &Store, state: Rc<RefCell<ModuleState>>
 		callback_type,
 		move |_caller: Caller, _params: &[Val], results: &mut [Val]| {
 			results[0] = Val::I32(match state.borrow().host_error {
-				Some(_) => 1,
+				Some(ref e) => {
+					let buf = serialize(e)
+						.map_err(|e| Trap::new(format!("serialize host error failed: {:?}", e)))?;
+					buf.len().try_into().map_err(|e| {
+						Trap::new(format!("try convert host error len failed: {:?}", e))
+					})?
+				}
 				None => 0,
 			});
 			Ok(())
