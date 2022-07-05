@@ -64,32 +64,16 @@ pub mod prelude;
 /// A result type for errors that occur within the wapc library
 pub type WapcResult<T> = std::result::Result<T, errors::WapcError>;
 
+use crate::callbacks::ModuleState;
 use crate::modreg::ModuleRegistry;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use tea_codec::error::TeaError;
 use wasmtime::Func;
 use wasmtime::Instance;
-
-use std::cell::RefCell;
-
-use crate::callbacks::ModuleState;
-use std::rc::Rc;
-use tea_codec::error::TeaError;
 use wasmtime::*;
-
-macro_rules!  call {
-    ($func:expr, $($p:expr),*) => {
-      match $func.borrow().call(&[$($p.into()),*]) {
-        Ok(result) => {
-          let result: i32 = result[0].i32().unwrap();
-          result
-        }
-        Err(e) => {
-            error!("Failure invoking guest module handler: {:?}", e);
-            0
-        }
-      }
-    }
-  }
 
 static GLOBAL_MODULE_COUNT: AtomicU64 = AtomicU64::new(1);
 
@@ -109,10 +93,6 @@ const HOST_ERROR_LEN_FN: &str = "__host_error_len";
 // -- Functions called by host, exported by guest
 const GUEST_CALL: &str = "__guest_call";
 
-// namespace needed for some language support
-const WASI_UNSTABLE_NAMESPACE: &str = "wasi_unstable";
-const WASI_SNAPSHOT_PREVIEW1_NAMESPACE: &str = "wasi_snapshot_preview1";
-
 type HostCallback = dyn Fn(u64, &str, &str, &str, &[u8]) -> std::result::Result<Vec<u8>, TeaError>
 	+ Sync
 	+ Send
@@ -121,7 +101,7 @@ type HostCallback = dyn Fn(u64, &str, &str, &str, &[u8]) -> std::result::Result<
 type LogCallback = dyn Fn(u64, &str) -> std::result::Result<(), TeaError> + Sync + Send + 'static;
 
 #[derive(Debug, Clone)]
-struct Invocation {
+pub struct Invocation {
 	operation: String,
 	msg: Vec<u8>,
 }
@@ -168,10 +148,11 @@ impl WasiParams {
 /// `WapcHost` makes no assumptions about the contents or format of either the payload or the
 /// operation name.
 pub struct WapcHost {
-	state: Rc<RefCell<ModuleState>>,
+	state: Arc<RefCell<ModuleState>>,
+	store: Rc<RefCell<Option<Store<ModuleRegistry>>>>,
 	instance: Rc<RefCell<Option<Instance>>>,
 	wasidata: Option<WasiParams>,
-	guest_call_fn: HostRef<Func>,
+	guest_call_fn: Func,
 }
 
 impl WapcHost {
@@ -185,14 +166,13 @@ impl WapcHost {
 		wasi: Option<WasiParams>,
 	) -> WapcResult<Self> {
 		let id = GLOBAL_MODULE_COUNT.fetch_add(1, Ordering::SeqCst);
-		let state = Rc::new(RefCell::new(ModuleState::new(id, Box::new(host_callback))));
-		let instance_ref = Rc::new(RefCell::new(None));
-		let instance = WapcHost::instance_from_buffer(buf, &wasi, state.clone())?;
-		instance_ref.replace(Some(instance));
-		let gc = guest_call_fn(instance_ref.clone())?;
+		let state = Arc::new(RefCell::new(ModuleState::new(id, Box::new(host_callback))));
+		let (mut store, instance) = WapcHost::instance_from_buffer(buf, &wasi, state.clone())?;
+		let gc = guest_call_fn(&mut store, &instance)?;
 		let mh = WapcHost {
 			state,
-			instance: instance_ref,
+			store: Rc::new(RefCell::new(Some(store))),
+			instance: Rc::new(RefCell::new(Some(instance))),
 			wasidata: wasi,
 			guest_call_fn: gc,
 		};
@@ -214,18 +194,17 @@ impl WapcHost {
 		wasi: Option<WasiParams>,
 	) -> WapcResult<Self> {
 		let id = GLOBAL_MODULE_COUNT.fetch_add(1, Ordering::SeqCst);
-		let state = Rc::new(RefCell::new(ModuleState::new_with_logger(
+		let state = Arc::new(RefCell::new(ModuleState::new_with_logger(
 			id,
 			Box::new(host_callback),
 			Box::new(logger),
 		)));
-		let instance_ref = Rc::new(RefCell::new(None));
-		let instance = WapcHost::instance_from_buffer(buf, &wasi, state.clone())?;
-		instance_ref.replace(Some(instance));
-		let gc = guest_call_fn(instance_ref.clone())?;
+		let (mut store, instance) = WapcHost::instance_from_buffer(buf, &wasi, state.clone())?;
+		let gc = guest_call_fn(&mut store, &instance)?;
 		let mh = WapcHost {
 			state,
-			instance: instance_ref,
+			store: Rc::new(RefCell::new(Some(store))),
+			instance: Rc::new(RefCell::new(Some(instance))),
 			wasidata: wasi,
 			guest_call_fn: gc,
 		};
@@ -259,11 +238,32 @@ impl WapcHost {
 			state.guest_error = None;
 		}
 
-		let callresult: i32 = call!(
-			self.guest_call_fn,
-			inv.operation.len() as i32,
-			inv.msg.len() as i32
-		);
+		let mut store_mut = self.store.borrow_mut();
+		let mut store_ctx = store_mut
+			.as_mut()
+			.ok_or(errors::new(errors::ErrorKind::WasmMisc(
+				"failed to get store".to_owned(),
+			)))?
+			.as_context_mut();
+		let callresult = self
+			.guest_call_fn
+			.typed::<(i32, i32), i32, _>(&store_ctx)
+			.map_err(|e| {
+				errors::new(errors::ErrorKind::WasmMisc(format!(
+					"convert typed guest call fn failed: {}",
+					e
+				)))
+			})?
+			.call(
+				&mut store_ctx,
+				(inv.operation.len() as i32, inv.msg.len() as i32),
+			)
+			.map_err(|e| {
+				errors::new(errors::ErrorKind::WasmMisc(format!(
+					"guest call failed: {}",
+					e
+				)))
+			})?;
 
 		if callresult == 0 {
 			// invocation failed
@@ -309,8 +309,9 @@ impl WapcHost {
 			module.len()
 		);
 		let state = self.state.clone();
-		let new_instance = WapcHost::instance_from_buffer(module, &self.wasidata, state)?;
+		let (store, new_instance) = WapcHost::instance_from_buffer(module, &self.wasidata, state)?;
 		self.instance.borrow_mut().replace(new_instance);
+		self.store.borrow_mut().replace(store);
 
 		self.initialize()
 	}
@@ -318,11 +319,9 @@ impl WapcHost {
 	fn instance_from_buffer(
 		buf: &[u8],
 		wasi: &Option<WasiParams>,
-		state: Rc<RefCell<ModuleState>>,
-	) -> WapcResult<Instance> {
+		state: Arc<RefCell<ModuleState>>,
+	) -> WapcResult<(Store<ModuleRegistry>, Instance)> {
 		let engine = Engine::default();
-		let store = Store::new(&engine);
-		let module = Module::new(&store, buf).unwrap();
 
 		let d = WasiParams::default();
 		let wasi = match wasi {
@@ -334,26 +333,51 @@ impl WapcHost {
 		let preopen_dirs =
 			modreg::compute_preopen_dirs(&wasi.preopened_dirs, &wasi.map_dirs).unwrap();
 		let argv = vec![]; // TODO: add support for argv (if applicable)
-
 		let module_registry =
-			ModuleRegistry::new(&store, &preopen_dirs, &argv, &wasi.env_vars).unwrap();
+			ModuleRegistry::new(&preopen_dirs, &argv, &wasi.env_vars, state).unwrap();
 
-		let imports = arrange_imports(&module, state.clone(), store.clone(), &module_registry);
+		let mut store = Store::new(&engine, module_registry);
+		let module = Module::new(&engine, buf).unwrap();
 
-		Ok(wasmtime::Instance::new(&module, imports?.as_slice()).unwrap())
+		let mut linker = Linker::new(&engine);
+		wasmtime_wasi::add_to_linker(&mut linker, |s: &mut ModuleRegistry| &mut s.ctx).map_err(
+			|e| {
+				errors::new(errors::ErrorKind::WasmMisc(format!(
+					"wasmtime wasi add to linker failed: {}",
+					e
+				)))
+			},
+		)?;
+
+		arrange_imports(&mut linker)?;
+
+		let instance = linker.instantiate(&mut store, &module).map_err(|e| {
+			errors::new(errors::ErrorKind::WasmMisc(format!(
+				"wasmtime instantiate failed: {}",
+				e
+			)))
+		})?;
+		Ok((store, instance))
 	}
 
 	fn initialize(&self) -> WapcResult<()> {
+		let mut store_mut = self.store.borrow_mut();
+		let mut store_ctx = store_mut
+			.as_mut()
+			.ok_or(errors::new(errors::ErrorKind::WasmMisc(
+				"failed to get store".to_owned(),
+			)))?
+			.as_context_mut();
 		if let Some(ext) = self
 			.instance
 			.borrow()
 			.as_ref()
 			.unwrap()
-			.get_export("_start")
+			.get_export(&mut store_ctx, "_start")
 		{
 			ext.into_func()
 				.unwrap()
-				.call(&[])
+				.call(&mut store_ctx, &[], &mut [])
 				.map(|_| ())
 				.map_err(|_err| {
 					errors::new(errors::ErrorKind::GuestCallFailure(TeaError::CommonError(
@@ -368,9 +392,9 @@ impl WapcHost {
 
 // Called once, then the result is cached. This returns a `Func` that corresponds
 // to the `__guest_call` export
-fn guest_call_fn(instance: Rc<RefCell<Option<Instance>>>) -> WapcResult<HostRef<Func>> {
-	if let Some(ext) = instance.borrow().as_ref().unwrap().get_export(GUEST_CALL) {
-		Ok(HostRef::new(ext.into_func().unwrap().clone()))
+fn guest_call_fn(store: &mut Store<ModuleRegistry>, instance: &Instance) -> WapcResult<Func> {
+	if let Some(ext) = instance.get_export(store, GUEST_CALL) {
+		Ok(ext.into_func().unwrap().clone())
 	} else {
 		Err(errors::new(errors::ErrorKind::GuestCallFailure(
 			TeaError::CommonError("Guest module did not export __guest_call function!".to_string()),
@@ -383,64 +407,37 @@ fn guest_call_fn(instance: Rc<RefCell<Option<Instance>>>) -> WapcResult<HostRef<
 /// order, we have to loop through the module imports and instantiate the
 /// corresponding callback. We **cannot** rely on a predictable import order
 /// in the wasm module
-fn arrange_imports(
-	module: &Module,
-	state: Rc<RefCell<ModuleState>>,
-	store: Store,
-	mod_registry: &ModuleRegistry,
-) -> WapcResult<Vec<Extern>> {
-	Ok(module
-		.imports()
-		.filter_map(|imp| {
-			if let ExternType::Func(_) = imp.ty() {
-				match imp.module() {
-					HOST_NAMESPACE => Some(callback_for_import(
-						imp.name(),
-						state.clone(),
-						store.clone(),
-					)),
-					// TODO: to forcibly block the use of WASI, these should error
-					// rather than looking up WASI modules.
-					WASI_UNSTABLE_NAMESPACE => {
-						let f = Extern::from(
-							mod_registry
-								.wasi_unstable
-								.get_export(imp.name())
-								.unwrap()
-								.clone(),
-						);
-						Some(f)
-					}
-					WASI_SNAPSHOT_PREVIEW1_NAMESPACE => {
-						let f: Extern = Extern::from(
-							mod_registry
-								.wasi_snapshot_preview1
-								.get_export(imp.name())
-								.unwrap()
-								.clone(),
-						);
-						Some(f)
-					}
-					other => panic!("import module `{}` was not found", other), //TODO: get rid of panic
-				}
-			} else {
-				None
-			}
-		})
-		.collect())
+fn arrange_imports(linker: &mut Linker<ModuleRegistry>) -> WapcResult<()> {
+	let export_funcs = [
+		HOST_CONSOLE_LOG,
+		HOST_CALL,
+		GUEST_REQUEST_FN,
+		HOST_RESPONSE_FN,
+		HOST_RESPONSE_LEN_FN,
+		GUEST_RESPONSE_FN,
+		GUEST_ERROR_FN,
+		HOST_ERROR_FN,
+		HOST_ERROR_LEN_FN,
+	];
+
+	for name in export_funcs {
+		callback_for_import(name, linker)?;
+	}
+
+	Ok(())
 }
 
-fn callback_for_import(import: &str, state: Rc<RefCell<ModuleState>>, store: Store) -> Extern {
+fn callback_for_import(import: &str, linker: &mut Linker<ModuleRegistry>) -> WapcResult<()> {
 	match import {
-		HOST_CONSOLE_LOG => callbacks::console_log_func(&store, state.clone()).into(),
-		HOST_CALL => callbacks::host_call_func(&store, state.clone()).into(),
-		GUEST_REQUEST_FN => callbacks::guest_request_func(&store, state.clone()).into(),
-		HOST_RESPONSE_FN => callbacks::host_response_func(&store, state.clone()).into(),
-		HOST_RESPONSE_LEN_FN => callbacks::host_response_len_func(&store, state.clone()).into(),
-		GUEST_RESPONSE_FN => callbacks::guest_response_func(&store, state.clone()).into(),
-		GUEST_ERROR_FN => callbacks::guest_error_func(&store, state.clone()).into(),
-		HOST_ERROR_FN => callbacks::host_error_func(&store, state.clone()).into(),
-		HOST_ERROR_LEN_FN => callbacks::host_error_len_func(&store, state.clone()).into(),
+		HOST_CONSOLE_LOG => callbacks::console_log_func(linker),
+		HOST_CALL => callbacks::host_call_func(linker),
+		GUEST_REQUEST_FN => callbacks::guest_request_func(linker),
+		HOST_RESPONSE_FN => callbacks::host_response_func(linker),
+		HOST_RESPONSE_LEN_FN => callbacks::host_response_len_func(linker),
+		GUEST_RESPONSE_FN => callbacks::guest_response_func(linker),
+		GUEST_ERROR_FN => callbacks::guest_error_func(linker),
+		HOST_ERROR_FN => callbacks::host_error_func(linker),
+		HOST_ERROR_LEN_FN => callbacks::host_error_len_func(linker),
 		_ => unreachable!(),
 	}
 }

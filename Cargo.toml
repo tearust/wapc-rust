@@ -19,7 +19,7 @@ serde = "1.0.110"
 serde_derive = "1.0.110"
 serde_json = "1.0.53"
 anyhow = "1.0"
-wasmtime = { git = "https://github.com/tearust/wasmtime", branch = "nitro" }
-wasmtime-wasi = { git = "https://github.com/tearust/wasmtime", branch = "nitro" }
-wasi-common = { git = "https://github.com/tearust/wasmtime", branch = "nitro" }
+wasmtime = "0.38.1"
+wasmtime-wasi = "0.38.1"
+wasi-common = "0.38.1"
 tea-codec = { git = "https://github.com/tearust/tea-codec", branch = "dev" }

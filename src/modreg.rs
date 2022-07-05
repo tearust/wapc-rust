@@ -1,80 +1,78 @@
 //! Taken from the wasmtime CLI
 
-use crate::WapcResult;
-use anyhow::Context as _;
+use crate::{callbacks::ModuleState, errors, WapcResult};
 use std::{
+	cell::RefCell,
 	ffi::OsStr,
 	fs::File,
 	path::{Component, PathBuf},
+	sync::Arc,
 };
-use wasi_common::preopen_dir;
-use wasmtime::Store;
-use wasmtime_wasi::{old::snapshot_0::Wasi as WasiSnapshot0, Wasi};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder};
 
 pub struct ModuleRegistry {
-	pub wasi_snapshot_preview1: Wasi,
-	pub wasi_unstable: WasiSnapshot0,
+	pub ctx: WasiCtx,
+	pub state: Arc<RefCell<ModuleState>>,
 }
 
 impl ModuleRegistry {
 	pub fn new(
-		store: &Store,
-		preopen_dirs: &[(String, File)],
+		_preopen_dirs: &[(String, File)],
 		argv: &[String],
 		vars: &[(String, String)],
+		state: Arc<RefCell<ModuleState>>,
 	) -> WapcResult<ModuleRegistry> {
-		let mut cx1 = wasi_common::WasiCtxBuilder::new();
-
-		cx1.inherit_stdio().args(argv).envs(vars);
-
-		for (name, file) in preopen_dirs {
-			cx1.preopened_dir(file.try_clone()?, name);
-		}
-
-		let cx1 = cx1.build().unwrap(); // TODO: get rid of unwrap
-
-		let mut builder = wasi_common::old::snapshot_0::WasiCtxBuilder::new();
-
-		let mut cx2 = builder.inherit_stdio().args(argv).envs(vars);
-
-		for (name, file) in preopen_dirs {
-			cx2 = cx2.preopened_dir(file.try_clone()?, name);
-		}
-
-		let cx2 = cx2.build().unwrap(); // TODO: get rid of unwrap
+		let builder = WasiCtxBuilder::new()
+			.args(argv)
+			.map_err(|e| {
+				errors::new(errors::ErrorKind::WasmMisc(format!(
+					"wasi ctx build args {:?} error: {}",
+					argv, e
+				)))
+			})?
+			.envs(vars)
+			.map_err(|e| {
+				errors::new(errors::ErrorKind::WasmMisc(format!(
+					"wasi ctx build envs {:?} error: {}",
+					vars, e
+				)))
+			})?;
+		// todo deal with preopen_dirs
 
 		Ok(ModuleRegistry {
-			wasi_snapshot_preview1: Wasi::new(store, cx1),
-			wasi_unstable: WasiSnapshot0::new(store, cx2),
+			state,
+			ctx: builder.build(),
 		})
 	}
 }
 
 pub(crate) fn compute_preopen_dirs(
-	dirs: &Vec<String>,
-	map_dirs: &Vec<(String, String)>,
+	_dirs: &Vec<String>,
+	_map_dirs: &Vec<(String, String)>,
 ) -> WapcResult<Vec<(String, File)>> {
-	let mut preopen_dirs = Vec::new();
+	// todo complete me
+	Ok(vec![])
+	// let mut preopen_dirs = Vec::new();
 
-	for dir in dirs.iter() {
-		preopen_dirs.push((
-			dir.clone(),
-			preopen_dir(dir)
-				.with_context(|| format!("failed to open directory '{}'", dir))
-				.unwrap(), // TODO: get rid of unwrap
-		));
-	}
+	// for dir in dirs.iter() {
+	// 	preopen_dirs.push((
+	// 		dir.clone(),
+	// 		preopen_dir(dir)
+	// 			.with_context(|| format!("failed to open directory '{}'", dir))
+	// 			.unwrap(), // TODO: get rid of unwrap
+	// 	));
+	// }
 
-	for (guest, host) in map_dirs.iter() {
-		preopen_dirs.push((
-			guest.clone(),
-			preopen_dir(host)
-				.with_context(|| format!("failed to open directory '{}'", host))
-				.unwrap(), // TODO: get rid of unwrap
-		));
-	}
+	// for (guest, host) in map_dirs.iter() {
+	// 	preopen_dirs.push((
+	// 		guest.clone(),
+	// 		preopen_dir(host)
+	// 			.with_context(|| format!("failed to open directory '{}'", host))
+	// 			.unwrap(), // TODO: get rid of unwrap
+	// 	));
+	// }
 
-	Ok(preopen_dirs)
+	// Ok(preopen_dirs)
 }
 
 #[allow(dead_code)]
