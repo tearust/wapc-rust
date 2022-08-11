@@ -1173,7 +1173,7 @@ checksum = "c02424087780c9b71cc96799eaeddff35af2bc513278cda5c99fc1f5d026d3c1"
 [[package]]
 name = "tea-codec"
 version = "0.1.1"
-source = "git+https://github.com/tearust/tea-codec?branch=dev#16c60d3f00ef444ada59bc9e2a00ce718dba1aee"
+source = "git+https://github.com/tearust/tea-codec?branch=eth#643dce33e901d60fb5c3c4c2531920d961239f82"
 dependencies = [
  "base64",
  "bincode",
