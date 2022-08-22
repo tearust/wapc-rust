@@ -22,4 +22,4 @@ anyhow = "1.0"
 wasmtime = "0.37"
 wasmtime-wasi = "0.37"
 wasi-common = "0.37"
-tea-codec = { git = "https://github.com/tearust/tea-codec", branch = "eth" }
+tea-codec = { git = "https://github.com/tearust/tea-codec", branch = "vmh-async" }
