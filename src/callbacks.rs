@@ -1,10 +1,12 @@
 use crate::{
-	errors, modreg::ModuleRegistry, HostCallback, Invocation, LogCallback, WapcResult,
-	GUEST_ERROR_FN, GUEST_REQUEST_FN, GUEST_RESPONSE_FN, HOST_CALL, HOST_CONSOLE_LOG,
-	HOST_ERROR_FN, HOST_ERROR_LEN_FN, HOST_NAMESPACE, HOST_RESPONSE_FN, HOST_RESPONSE_LEN_FN,
+	error::{Error, Result, WasmMisc},
+	modreg::ModuleRegistry,
+	HostCallback, Invocation, LogCallback, GUEST_ERROR_FN, GUEST_REQUEST_FN, GUEST_RESPONSE_FN,
+	HOST_CALL, HOST_CONSOLE_LOG, HOST_ERROR_FN, HOST_ERROR_LEN_FN, HOST_NAMESPACE,
+	HOST_RESPONSE_FN, HOST_RESPONSE_LEN_FN,
 };
 use std::convert::TryInto;
-use tea_codec::{deserialize, error::TeaError, serialize};
+use tea_codec::{deserialize, serialize};
 use wasmtime::{
 	AsContext, AsContextMut, Caller, FuncType, Linker, Memory, StoreContext, StoreContextMut, Trap,
 	Val, ValType,
@@ -15,8 +17,8 @@ pub struct ModuleState {
 	pub guest_request: Option<Invocation>,
 	pub guest_response: Option<Vec<u8>>,
 	pub host_response: Option<Vec<u8>>,
-	pub guest_error: Option<TeaError>,
-	pub host_error: Option<TeaError>,
+	pub guest_error: Option<Error>,
+	pub host_error: Option<Error>,
 	pub host_callback: Option<Box<HostCallback>>,
 	pub log_callback: Option<Box<LogCallback>>,
 	pub id: u64,
@@ -46,7 +48,7 @@ impl ModuleState {
 	}
 }
 
-pub(crate) fn guest_request_func(linker: &mut Linker<ModuleRegistry>) -> WapcResult<()> {
+pub(crate) fn guest_request_func(linker: &mut Linker<ModuleRegistry>) -> Result<()> {
 	linker
 		.func_new(
 			HOST_NAMESPACE,
@@ -71,16 +73,11 @@ pub(crate) fn guest_request_func(linker: &mut Linker<ModuleRegistry>) -> WapcRes
 				Ok(())
 			},
 		)
-		.map_err(|e| {
-			errors::new(errors::ErrorKind::WasmMisc(format!(
-				"wrap guest request func failed: {}",
-				e
-			)))
-		})?;
+		.map_err(|e| WasmMisc(format!("wrap guest request func failed: {}", e)))?;
 	Ok(())
 }
 
-pub(crate) fn console_log_func(linker: &mut Linker<ModuleRegistry>) -> WapcResult<()> {
+pub(crate) fn console_log_func(linker: &mut Linker<ModuleRegistry>) -> Result<()> {
 	linker
 		.func_new(
 			HOST_NAMESPACE,
@@ -107,16 +104,11 @@ pub(crate) fn console_log_func(linker: &mut Linker<ModuleRegistry>) -> WapcResul
 				Ok(())
 			},
 		)
-		.map_err(|e| {
-			errors::new(errors::ErrorKind::WasmMisc(format!(
-				"wrap console log func failed: {}",
-				e
-			)))
-		})?;
+		.map_err(|e| WasmMisc(format!("wrap console log func failed: {}", e)))?;
 	Ok(())
 }
 
-pub(crate) fn host_call_func(linker: &mut Linker<ModuleRegistry>) -> WapcResult<()> {
+pub(crate) fn host_call_func(linker: &mut Linker<ModuleRegistry>) -> Result<()> {
 	linker
 		.func_new(
 			HOST_NAMESPACE,
@@ -179,9 +171,7 @@ pub(crate) fn host_call_func(linker: &mut Linker<ModuleRegistry>) -> WapcResult<
 				let result = {
 					match caller.data().state.borrow().host_callback {
 						Some(ref f) => f(id, bd, ns, op, &vec),
-						None => Err(TeaError::CommonError(
-							"missing host callback function".into(),
-						)),
+						None => Err("missing host callback function".into()),
 					}
 				};
 				results[0] = Val::I32(match result {
@@ -198,16 +188,11 @@ pub(crate) fn host_call_func(linker: &mut Linker<ModuleRegistry>) -> WapcResult<
 				Ok(())
 			},
 		)
-		.map_err(|e| {
-			errors::new(errors::ErrorKind::WasmMisc(format!(
-				"wrap host call func failed: {}",
-				e
-			)))
-		})?;
+		.map_err(|e| WasmMisc(format!("wrap host call func failed: {}", e)))?;
 	Ok(())
 }
 
-pub(crate) fn host_response_func(linker: &mut Linker<ModuleRegistry>) -> WapcResult<()> {
+pub(crate) fn host_response_func(linker: &mut Linker<ModuleRegistry>) -> Result<()> {
 	linker
 		.func_new(
 			HOST_NAMESPACE,
@@ -223,16 +208,11 @@ pub(crate) fn host_response_func(linker: &mut Linker<ModuleRegistry>) -> WapcRes
 				Ok(())
 			},
 		)
-		.map_err(|e| {
-			errors::new(errors::ErrorKind::WasmMisc(format!(
-				"wrap host response func failed: {}",
-				e
-			)))
-		})?;
+		.map_err(|e| WasmMisc(format!("wrap host response func failed: {}", e)))?;
 	Ok(())
 }
 
-pub(crate) fn host_response_len_func(linker: &mut Linker<ModuleRegistry>) -> WapcResult<()> {
+pub(crate) fn host_response_len_func(linker: &mut Linker<ModuleRegistry>) -> Result<()> {
 	linker
 		.func_new(
 			HOST_NAMESPACE,
@@ -246,16 +226,11 @@ pub(crate) fn host_response_len_func(linker: &mut Linker<ModuleRegistry>) -> Wap
 				Ok(())
 			},
 		)
-		.map_err(|e| {
-			errors::new(errors::ErrorKind::WasmMisc(format!(
-				"wrap host response len func failed: {}",
-				e
-			)))
-		})?;
+		.map_err(|e| WasmMisc(format!("wrap host response len func failed: {}", e)))?;
 	Ok(())
 }
 
-pub(crate) fn guest_response_func(linker: &mut Linker<ModuleRegistry>) -> WapcResult<()> {
+pub(crate) fn guest_response_func(linker: &mut Linker<ModuleRegistry>) -> Result<()> {
 	linker
 		.func_new(
 			HOST_NAMESPACE,
@@ -271,16 +246,11 @@ pub(crate) fn guest_response_func(linker: &mut Linker<ModuleRegistry>) -> WapcRe
 				Ok(())
 			},
 		)
-		.map_err(|e| {
-			errors::new(errors::ErrorKind::WasmMisc(format!(
-				"wrap guest response func failed: {}",
-				e
-			)))
-		})?;
+		.map_err(|e| WasmMisc(format!("wrap guest response func failed: {}", e)))?;
 	Ok(())
 }
 
-pub(crate) fn guest_error_func(linker: &mut Linker<ModuleRegistry>) -> WapcResult<()> {
+pub(crate) fn guest_error_func(linker: &mut Linker<ModuleRegistry>) -> Result<()> {
 	linker
 		.func_new(
 			HOST_NAMESPACE,
@@ -299,16 +269,11 @@ pub(crate) fn guest_error_func(linker: &mut Linker<ModuleRegistry>) -> WapcResul
 				Ok(())
 			},
 		)
-		.map_err(|e| {
-			errors::new(errors::ErrorKind::WasmMisc(format!(
-				"wrap guest error func failed: {}",
-				e
-			)))
-		})?;
+		.map_err(|e| WasmMisc(format!("wrap guest error func failed: {}", e)))?;
 	Ok(())
 }
 
-pub(crate) fn host_error_func(linker: &mut Linker<ModuleRegistry>) -> WapcResult<()> {
+pub(crate) fn host_error_func(linker: &mut Linker<ModuleRegistry>) -> Result<()> {
 	linker
 		.func_new(
 			HOST_NAMESPACE,
@@ -331,16 +296,11 @@ pub(crate) fn host_error_func(linker: &mut Linker<ModuleRegistry>) -> WapcResult
 				Ok(())
 			},
 		)
-		.map_err(|e| {
-			errors::new(errors::ErrorKind::WasmMisc(format!(
-				"wrap host error func failed: {}",
-				e
-			)))
-		})?;
+		.map_err(|e| WasmMisc(format!("wrap host error func failed: {}", e)))?;
 	Ok(())
 }
 
-pub(crate) fn host_error_len_func(linker: &mut Linker<ModuleRegistry>) -> WapcResult<()> {
+pub(crate) fn host_error_len_func(linker: &mut Linker<ModuleRegistry>) -> Result<()> {
 	let callback_type = FuncType::new([], [ValType::I32]);
 	linker
 		.func_new(
@@ -362,12 +322,7 @@ pub(crate) fn host_error_len_func(linker: &mut Linker<ModuleRegistry>) -> WapcRe
 				Ok(())
 			},
 		)
-		.map_err(|e| {
-			errors::new(errors::ErrorKind::WasmMisc(format!(
-				"wrap host error len func failed: {}",
-				e
-			)))
-		})?;
+		.map_err(|e| WasmMisc(format!("wrap host error len func failed: {}", e)))?;
 	Ok(())
 }
 

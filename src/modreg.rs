@@ -1,6 +1,9 @@
 //! Taken from the wasmtime CLI
 
-use crate::{callbacks::ModuleState, errors, WapcResult};
+use crate::{
+	callbacks::ModuleState,
+	error::{Result, WasmMisc},
+};
 use std::{
 	cell::RefCell,
 	ffi::OsStr,
@@ -21,22 +24,12 @@ impl ModuleRegistry {
 		argv: &[String],
 		vars: &[(String, String)],
 		state: Arc<RefCell<ModuleState>>,
-	) -> WapcResult<ModuleRegistry> {
+	) -> Result<ModuleRegistry> {
 		let builder = WasiCtxBuilder::new()
 			.args(argv)
-			.map_err(|e| {
-				errors::new(errors::ErrorKind::WasmMisc(format!(
-					"wasi ctx build args {:?} error: {}",
-					argv, e
-				)))
-			})?
+			.map_err(|e| WasmMisc(format!("wasi ctx build args {:?} error: {}", argv, e)))?
 			.envs(vars)
-			.map_err(|e| {
-				errors::new(errors::ErrorKind::WasmMisc(format!(
-					"wasi ctx build envs {:?} error: {}",
-					vars, e
-				)))
-			})?;
+			.map_err(|e| WasmMisc(format!("wasi ctx build envs {:?} error: {}", vars, e)))?;
 		// todo deal with preopen_dirs
 
 		Ok(ModuleRegistry {
@@ -49,7 +42,7 @@ impl ModuleRegistry {
 pub(crate) fn compute_preopen_dirs(
 	_dirs: &Vec<String>,
 	_map_dirs: &Vec<(String, String)>,
-) -> WapcResult<Vec<(String, File)>> {
+) -> Result<Vec<(String, File)>> {
 	// todo complete me
 	Ok(vec![])
 	// let mut preopen_dirs = Vec::new();

@@ -19,7 +19,7 @@
 //! ```
 //! extern crate wapc;
 //! use wapc::prelude::*;
-//! use wapc::WapcResult;
+//! use wapc::Result;
 //!
 //! # fn load_file() -> Vec<u8> {
 //! #    include_bytes!("../.assets/hello.wasm").to_vec()
@@ -27,7 +27,7 @@
 //! # fn load_wasi_file() -> Vec<u8> {
 //! #    include_bytes!("../.assets/hello_wasi.wasm").to_vec()
 //! # }
-//! pub fn main() -> WapcResult<()> {
+//! pub fn main() -> Result<()> {
 //!     let module_bytes = load_file();
 //!     let mut host = WapcHost::new(|id: u64, bd: &str, ns: &str, op: &str, payload: &[u8]| {
 //!         println!("Guest {} invoked '{}->{}:{}' with payload of {} bytes", id, bd, ns, op, payload.len());
@@ -53,16 +53,20 @@
 //! assumes a single-threaded execution environment. The `host_callback` function intentionally
 //! has no references to the WebAssembly module bytes or the running instance.
 
+#![feature(generic_associated_types)]
+#![feature(min_specialization)]
+
 #[macro_use]
 extern crate log;
 
 mod callbacks;
-pub mod errors;
+pub mod error;
 mod modreg;
 pub mod prelude;
 
 /// A result type for errors that occur within the wapc library
-pub type WapcResult<T> = std::result::Result<T, errors::WapcError>;
+pub use error::Result;
+use error::{Error, GuestCallFailure, WasmMisc};
 
 use crate::callbacks::ModuleState;
 use crate::modreg::ModuleRegistry;
@@ -70,7 +74,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tea_codec::error::TeaError;
 use wasmtime::Func;
 use wasmtime::Instance;
 use wasmtime::*;
@@ -93,12 +96,12 @@ const HOST_ERROR_LEN_FN: &str = "__host_error_len";
 // -- Functions called by host, exported by guest
 const GUEST_CALL: &str = "__guest_call";
 
-type HostCallback = dyn Fn(u64, &str, &str, &str, &[u8]) -> std::result::Result<Vec<u8>, TeaError>
+type HostCallback = dyn Fn(u64, &str, &str, &str, &[u8]) -> std::result::Result<Vec<u8>, Error>
 	+ Sync
 	+ Send
 	+ 'static;
 
-type LogCallback = dyn Fn(u64, &str) -> std::result::Result<(), TeaError> + Sync + Send + 'static;
+type LogCallback = dyn Fn(u64, &str) -> std::result::Result<(), Error> + Sync + Send + 'static;
 
 #[derive(Debug, Clone)]
 pub struct Invocation {
@@ -158,13 +161,10 @@ pub struct WapcHost {
 impl WapcHost {
 	/// Creates a new instance of a waPC-compliant WebAssembly host runtime.
 	pub fn new(
-		host_callback: impl Fn(u64, &str, &str, &str, &[u8]) -> std::result::Result<Vec<u8>, TeaError>
-			+ 'static
-			+ Sync
-			+ Send,
+		host_callback: impl Fn(u64, &str, &str, &str, &[u8]) -> Result<Vec<u8>> + 'static + Sync + Send,
 		buf: &[u8],
 		wasi: Option<WasiParams>,
-	) -> WapcResult<Self> {
+	) -> Result<Self> {
 		let id = GLOBAL_MODULE_COUNT.fetch_add(1, Ordering::SeqCst);
 		let state = Arc::new(RefCell::new(ModuleState::new(id, Box::new(host_callback))));
 		let (mut store, instance) = WapcHost::instance_from_buffer(buf, &wasi, state.clone())?;
@@ -185,14 +185,11 @@ impl WapcHost {
 	/// Creates a new instance of a waPC-compliant WebAssembly host runtime with a callback handler
 	/// for logging
 	pub fn new_with_logger(
-		host_callback: impl Fn(u64, &str, &str, &str, &[u8]) -> std::result::Result<Vec<u8>, TeaError>
-			+ 'static
-			+ Sync
-			+ Send,
+		host_callback: impl Fn(u64, &str, &str, &str, &[u8]) -> Result<Vec<u8>> + 'static + Sync + Send,
 		buf: &[u8],
-		logger: impl Fn(u64, &str) -> std::result::Result<(), TeaError> + Sync + Send + 'static,
+		logger: impl Fn(u64, &str) -> Result<()> + Sync + Send + 'static,
 		wasi: Option<WasiParams>,
-	) -> WapcResult<Self> {
+	) -> Result<Self> {
 		let id = GLOBAL_MODULE_COUNT.fetch_add(1, Ordering::SeqCst);
 		let state = Arc::new(RefCell::new(ModuleState::new_with_logger(
 			id,
@@ -228,7 +225,7 @@ impl WapcHost {
 	/// It is worth noting that the _first_ time `call` is invoked, the WebAssembly module
 	/// will be JIT-compiled. This can take up to a few seconds on debug .wasm files, but
 	/// all subsequent calls will be "hot" and run at near-native speeds.    
-	pub fn call(&mut self, op: &str, payload: &[u8]) -> WapcResult<Vec<u8>> {
+	pub fn call(&mut self, op: &str, payload: &[u8]) -> Result<Vec<u8>> {
 		let inv = Invocation::new(op, payload.to_vec());
 
 		{
@@ -241,49 +238,36 @@ impl WapcHost {
 		let mut store_mut = self.store.borrow_mut();
 		let mut store_ctx = store_mut
 			.as_mut()
-			.ok_or(errors::new(errors::ErrorKind::WasmMisc(
-				"failed to get store".to_owned(),
-			)))?
+			.ok_or(WasmMisc("failed to get store".to_owned()))?
 			.as_context_mut();
 		let callresult = self
 			.guest_call_fn
 			.typed::<(i32, i32), i32, _>(&store_ctx)
-			.map_err(|e| {
-				errors::new(errors::ErrorKind::WasmMisc(format!(
-					"convert typed guest call fn failed: {}",
-					e
-				)))
-			})?
+			.map_err(|e| WasmMisc(format!("convert typed guest call fn failed: {}", e).into()))?
 			.call(
 				&mut store_ctx,
 				(inv.operation.len() as i32, inv.msg.len() as i32),
 			)
-			.map_err(|e| {
-				errors::new(errors::ErrorKind::WasmMisc(format!(
-					"guest call failed: {}",
-					e
-				)))
-			})?;
+			.map_err(|e| WasmMisc(format!("guest call failed: {}", e)))?;
 
 		if callresult == 0 {
 			// invocation failed
 			match self.state.borrow().guest_error {
-				Some(ref s) => Err(errors::new(errors::ErrorKind::GuestCallFailure(s.clone()))),
-				None => Err(errors::new(errors::ErrorKind::GuestCallFailure(
-					TeaError::CommonError("No error message set for call failure".to_string()),
-				))),
+				Some(ref s) => Err(GuestCallFailure(s.clone()).into()),
+				None => {
+					Err(GuestCallFailure("No error message set for call failure".into()).into())
+				}
 			}
 		} else {
 			// invocation succeeded
 			match self.state.borrow().guest_response {
 				Some(ref e) => Ok(e.clone()),
 				None => match self.state.borrow().guest_error {
-					Some(ref s) => Err(errors::new(errors::ErrorKind::GuestCallFailure(s.clone()))),
-					None => Err(errors::new(errors::ErrorKind::GuestCallFailure(
-						TeaError::CommonError(
-							"No error message OR response set for call success".to_string(),
-						),
-					))),
+					Some(ref s) => Err(GuestCallFailure(s.clone()).into()),
+					None => Err(GuestCallFailure(
+						"No error message OR response set for call success".into(),
+					)
+					.into()),
 				},
 			}
 		}
@@ -303,7 +287,7 @@ impl WapcHost {
 	/// If you perform a hot swap of a WASI module, you cannot alter the parameters used to create the WASI module
 	/// like the environment variables, mapped directories, pre-opened files, etc. Not abiding by this could lead
 	/// to privilege escalation attacks or non-deterministic behavior after the swap.
-	pub fn replace_module(&self, module: &[u8]) -> WapcResult<()> {
+	pub fn replace_module(&self, module: &[u8]) -> Result<()> {
 		info!(
 			"HOT SWAP - Replacing existing WebAssembly module with new buffer, {} bytes",
 			module.len()
@@ -320,7 +304,7 @@ impl WapcHost {
 		buf: &[u8],
 		wasi: &Option<WasiParams>,
 		state: Arc<RefCell<ModuleState>>,
-	) -> WapcResult<(Store<ModuleRegistry>, Instance)> {
+	) -> Result<(Store<ModuleRegistry>, Instance)> {
 		let engine = Engine::default();
 
 		let d = WasiParams::default();
@@ -340,33 +324,22 @@ impl WapcHost {
 		let module = Module::new(&engine, buf).unwrap();
 
 		let mut linker = Linker::new(&engine);
-		wasmtime_wasi::add_to_linker(&mut linker, |s: &mut ModuleRegistry| &mut s.ctx).map_err(
-			|e| {
-				errors::new(errors::ErrorKind::WasmMisc(format!(
-					"wasmtime wasi add to linker failed: {}",
-					e
-				)))
-			},
-		)?;
+		wasmtime_wasi::add_to_linker(&mut linker, |s: &mut ModuleRegistry| &mut s.ctx)
+			.map_err(|e| WasmMisc(format!("wasmtime wasi add to linker failed: {}", e)))?;
 
 		arrange_imports(&mut linker)?;
 
-		let instance = linker.instantiate(&mut store, &module).map_err(|e| {
-			errors::new(errors::ErrorKind::WasmMisc(format!(
-				"wasmtime instantiate failed: {}",
-				e
-			)))
-		})?;
+		let instance = linker
+			.instantiate(&mut store, &module)
+			.map_err(|e| WasmMisc(format!("wasmtime instantiate failed: {}", e)))?;
 		Ok((store, instance))
 	}
 
-	fn initialize(&self) -> WapcResult<()> {
+	fn initialize(&self) -> Result<()> {
 		let mut store_mut = self.store.borrow_mut();
 		let mut store_ctx = store_mut
 			.as_mut()
-			.ok_or(errors::new(errors::ErrorKind::WasmMisc(
-				"failed to get store".to_owned(),
-			)))?
+			.ok_or(WasmMisc("failed to get store".to_owned()))?
 			.as_context_mut();
 		if let Some(ext) = self
 			.instance
@@ -379,11 +352,7 @@ impl WapcHost {
 				.unwrap()
 				.call(&mut store_ctx, &[], &mut [])
 				.map(|_| ())
-				.map_err(|_err| {
-					errors::new(errors::ErrorKind::GuestCallFailure(TeaError::CommonError(
-						"Error invoking _start function!".to_string(),
-					)))
-				})
+				.map_err(|_err| GuestCallFailure("Error invoking _start function!".into()).into())
 		} else {
 			Ok(())
 		}
@@ -392,13 +361,11 @@ impl WapcHost {
 
 // Called once, then the result is cached. This returns a `Func` that corresponds
 // to the `__guest_call` export
-fn guest_call_fn(store: &mut Store<ModuleRegistry>, instance: &Instance) -> WapcResult<Func> {
+fn guest_call_fn(store: &mut Store<ModuleRegistry>, instance: &Instance) -> Result<Func> {
 	if let Some(ext) = instance.get_export(store, GUEST_CALL) {
 		Ok(ext.into_func().unwrap().clone())
 	} else {
-		Err(errors::new(errors::ErrorKind::GuestCallFailure(
-			TeaError::CommonError("Guest module did not export __guest_call function!".to_string()),
-		)))
+		Err(GuestCallFailure("Guest module did not export __guest_call function!".into()).into())
 	}
 }
 
@@ -407,7 +374,7 @@ fn guest_call_fn(store: &mut Store<ModuleRegistry>, instance: &Instance) -> Wapc
 /// order, we have to loop through the module imports and instantiate the
 /// corresponding callback. We **cannot** rely on a predictable import order
 /// in the wasm module
-fn arrange_imports(linker: &mut Linker<ModuleRegistry>) -> WapcResult<()> {
+fn arrange_imports(linker: &mut Linker<ModuleRegistry>) -> Result<()> {
 	let export_funcs = [
 		HOST_CONSOLE_LOG,
 		HOST_CALL,
@@ -427,7 +394,7 @@ fn arrange_imports(linker: &mut Linker<ModuleRegistry>) -> WapcResult<()> {
 	Ok(())
 }
 
-fn callback_for_import(import: &str, linker: &mut Linker<ModuleRegistry>) -> WapcResult<()> {
+fn callback_for_import(import: &str, linker: &mut Linker<ModuleRegistry>) -> Result<()> {
 	match import {
 		HOST_CONSOLE_LOG => callbacks::console_log_func(linker),
 		HOST_CALL => callbacks::host_call_func(linker),

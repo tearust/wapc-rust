@@ -1,9 +1,8 @@
 extern crate wapc;
 use std::fs::File;
 use std::io::prelude::*;
-use tea_codec::error::TeaError;
 use wapc::prelude::*;
-use wapc::WapcResult;
+use wapc::Result;
 
 fn load_file() -> Vec<u8> {
 	let mut f = File::open(".assets/hello_zig.wasm").unwrap();
@@ -12,7 +11,7 @@ fn load_file() -> Vec<u8> {
 	buf
 }
 
-pub fn main() -> WapcResult<()> {
+pub fn main() -> Result<()> {
 	env_logger::init();
 	let module_bytes = load_file();
 	let mut host = WapcHost::new(host_callback, &module_bytes, None)?;
@@ -24,13 +23,7 @@ pub fn main() -> WapcResult<()> {
 	Ok(())
 }
 
-fn host_callback(
-	id: u64,
-	bd: &str,
-	ns: &str,
-	op: &str,
-	payload: &[u8],
-) -> Result<Vec<u8>, TeaError> {
+fn host_callback(id: u64, bd: &str, ns: &str, op: &str, payload: &[u8]) -> Result<Vec<u8>> {
 	println!(
 		"Guest {} invoked '{}->{}:{}' with payload of {}",
 		id,
